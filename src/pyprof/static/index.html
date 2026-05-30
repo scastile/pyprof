@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pyprof — Flame Graph</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+@import "style.css";
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1><span class="logo">pyprof</span> <span id="command"></span></h1>
+    <span id="total-time"></span>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" onclick="showTab('flame',this)">Flame Graph</button>
+    <button class="tab" onclick="showTab('table',this)">Call Tree</button>
+    <button class="tab diff-btn hidden" onclick="showTab('diff',this)">Diff</button>
+  </nav>
+
+  <main>
+    <section id="flame-view">
+      <div id="tooltip" class="tooltip hidden"></div>
+      <div id="flame-chart"></div>
+      <div id="flame-info">
+        <p>Click a frame to zoom. Click top bar to reset.</p>
+      </div>
+    </section>
+
+    <section id="table-view" class="hidden">
+      <div class="table-controls">
+        <label>Sort:
+          <select id="sort-select" onchange="renderTable()">
+            <option value="time">Self Time</option>
+            <option value="cumulative">Total Time</option>
+            <option value="calls">Call Count</option>
+            <option value="name">Name</option>
+          </select>
+        </label>
+        <label>Limit:
+          <select id="limit-select" onchange="renderTable()">
+            <option value="25">25</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <input type="text" id="filter-input" placeholder="Filter functions..." oninput="renderTable()">
+      </div>
+      <table id="func-table">
+        <thead>
+          <tr>
+            <th data-sort="time" class="sortable">Self Time</th>
+            <th data-sort="cumulative" class="sortable">Total Time</th>
+            <th data-sort="calls" class="sortable">Calls</th>
+            <th data-sort="name" class="sortable">Function</th>
+          </tr>
+        </thead>
+        <tbody id="func-tbody"></tbody>
+      </table>
+    </section>
+
+    <section id="diff-view" class="hidden">
+      <div id="diff-summary"></div>
+      <table id="diff-table">
+        <thead>
+          <tr>
+            <th>&#x394; Time</th>
+            <th>% Change</th>
+            <th>Old</th>
+            <th>New</th>
+            <th>Function</th>
+          </tr>
+        </thead>
+        <tbody id="diff-tbody"></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
