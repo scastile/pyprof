@@ -229,6 +229,11 @@ def _build_profile_data(command: str, prof: cProfile.Profile) -> ProfileData:
     )
 
 
+def _is_builtin(func_id: str) -> bool:
+    """Check if a func_id represents a builtin/C function."""
+    return func_id.startswith("~:") or ":<built-in" in func_id or ":<method" in func_id
+
+
 def _build_flame_tree(
     functions: list[FuncStats],
     func_map: dict[str, FuncStats],
@@ -236,69 +241,72 @@ def _build_flame_tree(
 ) -> FlameNode:
     """Build a flame graph tree from profiled function data.
 
-    The flame tree is a hierarchical representation where each node's value
-    is its self time, and children are callees.
+    Uses the function with the highest cumulative (total) time as the root —
+    this works well for cProfile data where the entry point accumulates all
+    time from its callees.
     """
-    # Find root functions (those not called by anything profiled, or called most)
-    # Use the function with most self time as the virtual root
-    all_callees: set[str] = set()
-    for callees in callee_map.values():
-        for callee_id, _, _ in callees:
-            all_callees.add(callee_id)
+    # Filter to user-defined functions, excluding <module> and <string> frames
+    def _is_toplevel(f: FuncStats) -> bool:
+        fid = _func_id(f.filename, f.func_name, f.line_no)
+        return not _is_builtin(fid) and f.func_name not in ("<module>", "<string>")
 
-    # Root = functions not called by anything else
-    roots = [f for f in functions if _func_id(f.filename, f.func_name, f.line_no) not in all_callees]
+    user_funcs = [f for f in functions if _is_toplevel(f)]
 
-    if not roots and functions:
-        roots = [functions[0]]
+    if not user_funcs:
+        user_funcs = [f for f in functions if not _is_builtin(_func_id(f.filename, f.func_name, f.line_no))]
+    if not user_funcs:
+        user_funcs = functions[:]
 
-    return _build_node(roots, func_map, callee_map, 0)
+    # Pick root: function with highest total_time (cumulative)
+    root_func = max(user_funcs, key=lambda f: f.total_time)
+
+    return _build_node([root_func], func_map, callee_map, 0)
 
 
 MAX_FLAME_DEPTH = 50
+MAX_FLAME_WIDTH = 30
 
 def _build_node(
-    funcs: list[FuncStats],
+    func: FuncStats,
     func_map: dict[str, FuncStats],
     callee_map: dict[str, list[tuple[str, int, float]]],
     depth: int,
+    visited: set[str],
 ) -> FlameNode:
-    """Recursively build flame tree nodes with depth limit."""
-    if not funcs:
-        return FlameNode(name="<idle>", value=0.0, children=[], depth=depth)
+    """Recursively build flame tree nodes with depth limit.
+
+    Each node's value = its self_time. Children's values are independent;
+    the flame graph layout makes each node's width proportional to its value
+    relative to its siblings.
+    """
+    func_id = _func_id(func.filename, func.func_name, func.line_no)
 
     if depth >= MAX_FLAME_DEPTH:
-        total_value = sum(f.self_time for f in funcs)
-        return FlameNode(name="<truncated>", value=total_value, children=[], depth=depth)
+        return FlameNode(name=f"{func.func_name} ({func.filename}:{func.line_no})",
+                         value=func.self_time, children=[], depth=depth)
 
-    children: list[FlameNode] = []
-    total_value = 0.0
-
-    for f in funcs:
-        func_id = _func_id(f.filename, f.func_name, f.line_no)
-        total_value += f.self_time
-
-        # Build children from callees
-        child_nodes: list[FlameNode] = []
-        if func_id in callee_map:
-            for callee_id, _cc, _tt in callee_map[func_id]:
-                if callee_id in func_map:
-                    child_nodes.append(
-                        _build_node([func_map[callee_id]], func_map, callee_map, depth + 1)
-                    )
-
-        node = FlameNode(
-            name=f"{f.func_name} ({f.filename}:{f.line_no})",
-            value=f.self_time,
-            children=child_nodes,
-            depth=depth,
-        )
-        children.append(node)
+    # Build children from callees sorted by self_time descending
+    child_nodes: list[FlameNode] = []
+    if func_id in callee_map and func_id not in visited:
+        new_visited = visited | {func_id}
+        callees = sorted(
+            callee_map[func_id],
+            key=lambda c: func_map[c[0]].self_time if c[0] in func_map else 0,
+            reverse=True,
+        )[:MAX_FLAME_WIDTH]
+        seen_callees: set[str] = set()
+        for callee_id, _cc, _tt in callees:
+            if callee_id in func_map and callee_id not in seen_callees and callee_id not in new_visited:
+                seen_callees.add(callee_id)
+                child_func = func_map[callee_id]
+                child_nodes.append(
+                    _build_node(child_func, func_map, callee_map, depth + 1, new_visited)
+                )
 
     return FlameNode(
-        name=funcs[0].func_name if len(funcs) == 1 else "<root>",
-        value=total_value,
-        children=children,
+        name=f"{func.func_name} ({func.filename}:{func.line_no})",
+        value=func.self_time,
+        children=child_nodes,
         depth=depth,
     )
 

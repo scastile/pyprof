@@ -79,32 +79,31 @@ function renderFlameGraph() {
   const treeData = profileData.flame_tree;
   const totalTime = profileData.total_time || 1;
 
-  const width = container.clientWidth || 960;
-  const frameHeight = 20;
+  const containerRect = container.getBoundingClientRect();
+  const width = Math.max(containerRect.width, 800);
+  const frameHeight = 22;
   const maxDepth = maxNodeDepth(treeData);
-  const height = (maxDepth + 2) * frameHeight;
+  const height = (maxDepth + 3) * frameHeight;
 
   const svg = d3.select(container).append('svg')
     .attr('width', width)
     .attr('height', height);
 
-  // Layout: squarified flame graph
-  const root = d3.hierarchy(treeData, d => d.children || []);
-  const partition = d3.partition().size([width, height])(root);
+  // Use d3.hierarchy with the raw data values (not summed)
+  const root = d3.hierarchy(treeData, d => d.children || [])
+    .sum(d => d.value || 0)
+    .sort((a, b) => b.value - a.value);
 
-  // Rescale x to actual time proportions
-  const totalValue = root.value || 1;
-  root.each(d => {
-    d.x0Scaled = (d.x0 / height) * width;  // we override below
-  });
-
-  // Manual partition layout by time proportion at each level
-  layoutFlame(root, 0, 0, width, frameHeight, totalValue);
+  // d3.partition does the layout correctly
+  const marginTop = frameHeight;  // reserve space for reset zoom bar
+  d3.partition()
+    .size([width, height - marginTop])
+    (root);
 
   const g = svg.selectAll('g')
     .data(root.descendants())
     .join('g')
-    .attr('transform', d => `translate(${d.x0},${d.depth * frameHeight})`);
+    .attr('transform', d => `translate(${d.x0},${marginTop + d.depth * frameHeight})`);
 
   // Bars
   g.append('rect')
@@ -143,23 +142,6 @@ function renderFlameGraph() {
     .text('Reset zoom');
 }
 
-function layoutFlame(node, x, depth, width, frameHeight, totalValue) {
-  node.x0 = x;
-  node.x1 = x + width;
-  node.depth = depth;
-
-  const children = node.children || [];
-  if (!children.length) return;
-
-  let offsetX = x;
-  const nodeTotal = node.value || 1;
-  for (const child of children) {
-    const childWidth = (child.value / nodeTotal) * width;
-    layoutFlame(child, offsetX, depth + 1, Math.max(childWidth, 1), frameHeight, totalValue);
-    offsetX += childWidth;
-  }
-}
-
 function maxNodeDepth(node) {
   if (!node.children || !node.children.length) return 0;
   return 1 + Math.max(...node.children.map(maxNodeDepth));
@@ -173,7 +155,8 @@ function shortenName(name) {
 
 function zoomFlame(node, root, svg, width, frameHeight, totalTime) {
   // Zoom so that this node fills the full width
-  const targetWidth = node.x1 - node.x0;
+  const targetWidth = (node.x1 - node.x0);
+  if (targetWidth <= 0) return;
   const scale = width / targetWidth;
 
   svg.selectAll('g').transition().duration(300)
