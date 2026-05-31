@@ -260,7 +260,7 @@ def _build_flame_tree(
     # Pick root: function with highest total_time (cumulative)
     root_func = max(user_funcs, key=lambda f: f.total_time)
 
-    return _build_node([root_func], func_map, callee_map, 0)
+    return _build_node(root_func, func_map, callee_map, 0, set())
 
 
 MAX_FLAME_DEPTH = 50
